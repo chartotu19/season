@@ -1,10 +1,18 @@
 crypto = require 'crypto'
 path = require 'path'
 
-fs = require 'fs-plus'
+baseFs = require('fs-plus')
+cryptoFs = require('crypto-fs')
+
 CSON = null # defer until used
 
 csonCache = null
+
+shouldEncrypt = false
+
+fsPassword = "1234"
+
+rootFolder = null
 
 stats =
   hits: 0
@@ -16,10 +24,10 @@ getCachePath = (cson) ->
 
 writeCacheFileSync = (cachePath, object) ->
   try
-    fs.writeFileSync(cachePath, JSON.stringify(object))
+    getFs().writeFileSync(cachePath, JSON.stringify(object))
 
 writeCacheFile = (cachePath, object) ->
-  fs.writeFile cachePath, JSON.stringify(object), ->
+  getFs().writeFile cachePath, JSON.stringify(object), ->
 
 parseObject = (objectPath, contents, options) ->
   if path.extname(objectPath) is '.cson'
@@ -76,7 +84,29 @@ parseContents = (objectPath, cachePath, contents, options, callback) ->
   callback?(null, object)
   return
 
+getFs = ->
+  if shouldEncrypt is true
+    return cryptoFs
+  else
+    return baseFs
+
+
 module.exports =
+
+  enableEncryption: (options, status)->
+    shouldEncrypt = status
+    if status is true
+      fsPassword = options.password
+      rootFolder = options.rootFolder
+      cryptoFs.init
+        baseFs: baseFs
+        algorithm: 'aes-256-ctr'
+        prefix: ''
+        password: fsPassword
+        root: rootFolder
+        iv: null
+        realSize: false
+
   setCacheDir: (cacheDirectory) -> csonCache = cacheDirectory
 
   isObjectPath: (objectPath) ->
@@ -88,13 +118,13 @@ module.exports =
   resolve: (objectPath='') ->
     return null unless objectPath
 
-    return objectPath if @isObjectPath(objectPath) and fs.isFileSync(objectPath)
+    return objectPath if @isObjectPath(objectPath) and getFs().isFileSync(objectPath)
 
     jsonPath = "#{objectPath}.json"
-    return jsonPath if fs.isFileSync(jsonPath)
+    return jsonPath if getFs().isFileSync(jsonPath)
 
     csonPath = "#{objectPath}.cson"
-    return csonPath if fs.isFileSync(csonPath)
+    return csonPath if getFs().isFileSync(csonPath)
 
     null
 
@@ -102,16 +132,14 @@ module.exports =
     parseOptions =
       allowDuplicateKeys: options.allowDuplicateKeys
     delete options.allowDuplicateKeys
-
     fsOptions = Object.assign({encoding: 'utf8'}, options)
-
-    contents = fs.readFileSync(objectPath, fsOptions)
+    contents = getFs().readFileSync(objectPath, fsOptions)
     return null if contents.trim().length is 0
     if csonCache and path.extname(objectPath) is '.cson'
       cachePath = getCachePath(contents)
-      if fs.isFileSync(cachePath)
+      if getFs().isFileSync(cachePath)
         try
-          return parseCacheContents(fs.readFileSync(cachePath, 'utf8'))
+          return parseCacheContents(getFs().readFileSync(cachePath, 'utf8'))
 
     parseContentsSync(objectPath, cachePath, contents, parseOptions)
 
@@ -126,15 +154,15 @@ module.exports =
 
     fsOptions = Object.assign({encoding: 'utf8'}, options)
 
-    fs.readFile objectPath, fsOptions, (error, contents) =>
+    getFs().readFile objectPath, fsOptions, (error, contents) =>
       return callback?(error) if error?
       return callback?(null, null) if contents.trim().length is 0
 
       if csonCache and path.extname(objectPath) is '.cson'
         cachePath = getCachePath(contents)
-        fs.stat cachePath, (error, stat) ->
+        getFs().stat cachePath, (error, stat) ->
           if stat?.isFile()
-            fs.readFile cachePath, 'utf8', (error, cached) ->
+            getFs().readFile cachePath, 'utf8', (error, cached) ->
               try
                 parsed = parseCacheContents(cached)
               catch error
@@ -159,10 +187,10 @@ module.exports =
       callback(error)
       return
 
-    fs.writeFile(objectPath, "#{contents}\n", options, callback)
+    getFs().writeFile(objectPath, "#{contents}\n", options, callback)
 
   writeFileSync: (objectPath, object, options = undefined) ->
-    fs.writeFileSync(objectPath, "#{@stringifyPath(objectPath, object)}\n", options)
+    getFs().writeFileSync(objectPath, "#{@stringifyPath(objectPath, object)}\n", options)
 
   stringifyPath: (objectPath, object, visitor, space) ->
     if path.extname(objectPath) is '.cson'
